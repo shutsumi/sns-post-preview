@@ -470,8 +470,25 @@ const cover=p=>p.coverId?U(p.coverId):U(p.media[0]?.thumb);
 const avatar=(cls='')=>S.profile.avatarId?`<img class="${cls}" src="${U(S.profile.avatarId)}">`:`<span class="ph ${cls}"></span>`;
 const uname=()=>`${esc(S.profile.username)}${S.profile.verified?I.verified:''}`;
 const fillerColors=['#d9d4cc','#c9d3d6','#e2d6c4','#cfd8c9','#d6cbd3','#c4ccd8','#ddd0c6','#cad6d1','#d8d3c2','#cbc6d6'];
-// 発見のダミー：フリー写真（Lorem Picsum）、縦長枠は写真をゆっくり動かして動画の自動再生に見せる
-const filler=(i,tall)=>`<div class="filler" style="background:linear-gradient(${(i*47)%360}deg,${fillerColors[i%10]},${fillerColors[(i+3)%10]})"><img class="${tall?'kb':''}" style="animation-delay:-${(i*1.7)%9}s" loading="lazy" src="https://picsum.photos/seed/igpv${i*7+3}/${tall?'540/960':'480/640'}" onerror="this.remove()"></div>`;
+// 発見のダミー：アメリカの30代女性の発見タブに出そうなジャンルを混ぜたフリー写真（Unsplash）
+// 縦長枠は写真をゆっくり動かして動画の自動再生に見せる
+const DUMMY_GENRES={
+  outfit:['1558769132-cb1aea458c5e','1765146487144-56678f4ca6f8','1525507119028-ed4c629a60a3'],
+  skincare:['1581182800629-7d90925ad072','1573461160327-b450ce3d8e7f','1585945037805-5fd82c2e60b1'],
+  brunch:['1504754524776-8f4f37790ca0','1621523132966-19f711d565d1','1493770348161-369560ae357d'],
+  pilates:['1747239069226-55382c570116','1579454566790-f9e5697ddf36','1552196527-bffef41ef674'],
+  homedecor:['1616046229478-9901c5536a45','1618220179428-22790b461013','1572048572872-2394404cf1f3'],
+  dog:['1591160690555-5debfba289f0','1612774412771-005ed8e861d2','1611250282006-4484dd3fba6b'],
+  beach:['1507525428034-b723cf961d3e','1506953823976-52e1fdc0149a','1501426026826-31c667bdf23d'],
+  latte:['1541167760496-1628856ab772','1511920170033-f8396924c348','1512568400610-62da28bc8a13'],
+  nails:['1632345031435-8727f6897d53','1604654894610-df63bc536371','1610992015762-45dca7fa3a85'],
+  baking:['1588467850695-a898367ce465','1517686469429-8bdb88b9f907','1499889808931-317a0255c0e9'],
+  flowers:['1582794543139-8ac9cb0f7b11','1487530811176-3780de880c2d','1531120364508-a6b656c3e78d'],
+  family:['1560707854-fb9a10eeaace','1542385151-efd9000785a0','1551934262-db2d7dd517f4'],
+};
+// ジャンルが隣り合わないよう、少しずらしながら順に混ぜる
+const DUMMY=(()=>{const g=Object.values(DUMMY_GENRES),out=[];for(let r=0;r<3;r++)for(let k=0;k<g.length;k++)out.push(g[(k*5+r*7)%g.length][r]);return out})();
+const filler=(i,tall)=>`<div class="filler" style="background:linear-gradient(${(i*47)%360}deg,${fillerColors[i%10]},${fillerColors[(i+3)%10]})"><img class="${tall?'kb':''}" style="animation-delay:-${(i*1.7)%9}s" loading="lazy" src="https://images.unsplash.com/photo-${DUMMY[i%DUMMY.length]}?w=${tall?540:420}&h=${tall?960:560}&fit=crop&auto=format&q=70" onerror="this.remove()"></div>`;
 function hashtags(t){return esc(t).replace(/(#[^\s#]+|@[\w.]+)/g,'<span style="color:var(--link)">$1</span>')}
 
 /* ========== 画面 ========== */
