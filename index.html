@@ -136,7 +136,7 @@ body.present{background:#e4e4e2}
 .tile .planmark{position:absolute;left:0;top:0;right:0;bottom:0;box-shadow:inset 0 0 0 3px var(--accent);pointer-events:none}
 .tile .planmark span{position:absolute;left:5px;top:5px;background:var(--accent);color:#fff;font-size:10px;font-weight:700;padding:1px 5px;border-radius:3px}
 .filler{width:100%;height:100%;overflow:hidden}
-.filler img{width:100%;height:100%;object-fit:cover;display:block}
+.filler img,.filler video{width:100%;height:100%;object-fit:cover;display:block}
 .filler img.kb{animation:kb 9s ease-in-out infinite alternate}
 @keyframes kb{from{transform:scale(1.05) translate(0,0)}to{transform:scale(1.22) translate(-4%,-5%)}}
 .empty{padding:60px 30px;text-align:center;color:var(--fg2);font-size:13px;line-height:1.8}
@@ -488,7 +488,15 @@ const DUMMY_GENRES={
 };
 // ジャンルが隣り合わないよう、少しずらしながら順に混ぜる
 const DUMMY=(()=>{const g=Object.values(DUMMY_GENRES),out=[];for(let r=0;r<3;r++)for(let k=0;k<g.length;k++)out.push(g[(k*5+r*7)%g.length][r]);return out})();
-const filler=(i,tall)=>`<div class="filler" style="background:linear-gradient(${(i*47)%360}deg,${fillerColors[i%10]},${fillerColors[(i+3)%10]})"><img class="${tall?'kb':''}" style="animation-delay:-${(i*1.7)%9}s" loading="lazy" src="https://images.unsplash.com/photo-${DUMMY[i%DUMMY.length]}?w=${tall?540:420}&h=${tall?960:560}&fit=crop&auto=format&q=70" onerror="this.remove()"></div>`;
+// ダミーの動画：Mixkit の無料素材（360p）、表示されたときだけ読み込む
+const DUMMY_VIDEOS=[
+  805,1053,810,1552,52057,1170,44556,43798,41859,45868,52039,1168,
+  50641,4420,236,1478,40556,51500,23327,33066,43925,1187,52033,2168,
+  51283,1116,49231,48889,4046,1197,4645,1186,4198,1191,4029
+];
+const fillerVideo=(i)=>{const id=DUMMY_VIDEOS[i%DUMMY_VIDEOS.length];
+  return `<div class="filler" style="background:${fillerColors[i%10]}"><video muted loop playsinline preload="none" data-auto data-src="https://assets.mixkit.co/videos/${id}/${id}-360.mp4" poster="https://assets.mixkit.co/videos/${id}/${id}-thumb-360-0.jpg"></video></div>`};
+const filler=(i,tall)=>`<div class="filler"style="background:linear-gradient(${(i*47)%360}deg,${fillerColors[i%10]},${fillerColors[(i+3)%10]})"><img class="${tall?'kb':''}" style="animation-delay:-${(i*1.7)%9}s" loading="lazy" src="https://images.unsplash.com/photo-${DUMMY[i%DUMMY.length]}?w=${tall?540:420}&h=${tall?960:560}&fit=crop&auto=format&q=70" onerror="this.remove()"></div>`;
 function hashtags(t){return esc(t).replace(/(#[^\s#]+|@[\w.]+)/g,'<span style="color:var(--link)">$1</span>')}
 
 /* ========== 画面 ========== */
@@ -602,11 +610,12 @@ function rExplore(){
   // 入りきらなかった分を空きに追加
   while(ri<reels.length){const c=cells.find(c=>c.tall&&!c.p);if(c)c.p=reels[ri++];else cells.push({tall:true,p:reels[ri++],f:fi++})}
   while(oi<others.length){const c=cells.find(c=>!c.tall&&!c.p);if(c)c.p=others[oi++];else cells.push({tall:false,p:others[oi++],f:fi++})}
+  let vi=0;
   view.innerHTML=`
    <div class="hdr" style="height:auto;padding:4px 0 0;display:block"><div class="search">${I.search}<span>検索</span></div></div>
    <div class="xgrid">${cells.map(c=>{
-     if(!c.p){const b=c.tall?I.reelBadge:(c.f%7===1||c.f%7===4)?I.carousel:c.f%7===6?I.reelBadge:'';
-       return `<div class="tile ${c.tall?'tall':''}">${filler(c.f,c.tall)}${b?`<span class="badge">${b}</span>`:''}</div>`}
+     if(!c.p){const vid=c.tall||c.f%3===1;const b=vid?I.reelBadge:(c.f%5===2)?I.carousel:'';
+       return `<div class="tile ${c.tall?'tall':''}">${vid?fillerVideo(vi++):filler(c.f,false)}${b?`<span class="badge">${b}</span>`:''}</div>`}
      const p=c.p;
      const media=p.type==='reel'&&c.tall&&p.media[0].kind==='video'
        ?`<video src="${U(p.media[0].id)}" poster="${cover(p)}" muted loop playsinline data-auto></video>`
@@ -750,7 +759,8 @@ function playVisible(){
   scr.querySelectorAll('video[data-auto]').forEach(v=>{
     const car=v.closest('.car');
     if(car){const i=Math.round(car.scrollLeft/car.clientWidth);const idx=[...car.children].indexOf(v.closest('.slide'));if(idx!==i){v.pause();return}}
-    if(v._vis){v.muted=muted;v.play().catch(()=>{v.muted=true;v.play().catch(()=>{})})}else v.pause();
+    if(v._vis&&v.dataset.src&&!v.getAttribute('src'))v.src=v.dataset.src;
+    if(v._vis){v.muted=v.dataset.src?true:muted;v.play().catch(()=>{v.muted=true;v.play().catch(()=>{})})}else v.pause();
   });
 }
 function wireVideos(){
