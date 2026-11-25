@@ -56,6 +56,11 @@ input,textarea,select{font:inherit;color:var(--ink)}
 .pitem .ops{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;align-items:center}
 .pitem .ops .check{margin:0;font-size:11.5px;margin-right:6px}
 
+.savebar{margin-top:12px;font-size:11.5px;padding:7px 10px;border-radius:4px;background:var(--soft);line-height:1.5}
+.savebar.ok::before{content:"● ";color:#3a9a5b}
+.savebar.ing{color:var(--accent);font-weight:700}
+.savebar.ng{background:#fff1ec;color:var(--accent);font-weight:700}
+
 /* ===== 表示エリア ===== */
 .stage{flex:1;display:flex;align-items:center;justify-content:center;position:relative;min-width:0}
 .stage-tools{position:absolute;top:14px;right:16px;display:flex;gap:6px;z-index:5}
@@ -130,7 +135,10 @@ body.present{background:#e4e4e2}
 .tile .views svg{width:15px;height:15px}
 .tile .planmark{position:absolute;left:0;top:0;right:0;bottom:0;box-shadow:inset 0 0 0 3px var(--accent);pointer-events:none}
 .tile .planmark span{position:absolute;left:5px;top:5px;background:var(--accent);color:#fff;font-size:10px;font-weight:700;padding:1px 5px;border-radius:3px}
-.filler{width:100%;height:100%}
+.filler{width:100%;height:100%;overflow:hidden}
+.filler img{width:100%;height:100%;object-fit:cover;display:block}
+.filler img.kb{animation:kb 9s ease-in-out infinite alternate}
+@keyframes kb{from{transform:scale(1.05) translate(0,0)}to{transform:scale(1.22) translate(-4%,-5%)}}
 .empty{padding:60px 30px;text-align:center;color:var(--fg2);font-size:13px;line-height:1.8}
 
 /* 発見 */
@@ -230,6 +238,8 @@ body.present{background:#e4e4e2}
   <p class="note" style="margin-top:8px">動画や画像はこのブラウザの中だけに保存され、外には送られません<br>右の画面は下のメニューで切り替えられます</p>
   <p class="note" style="margin-top:6px">Instagram および Meta とは関係のない、非公式の表示確認ツールです</p>
 
+  <div class="savebar" id="saveStatus"></div>
+
   <h2>アカウント</h2>
   <div class="avatar-edit">
     <span id="avaPrev"></span>
@@ -274,7 +284,12 @@ body.present{background:#e4e4e2}
   <p class="note">隠れやすい範囲は目安（上14%・下35%・右端のボタン列）。文字やロゴはこの外に置くと切れない</p>
 
   <h2>データ</h2>
-  <div class="btns"><button class="btn" id="resetAll">すべて消して最初から</button></div>
+  <p class="note" style="margin-bottom:8px">入れた動画・画像・文字は、このブラウザに自動で保存されます（更新しても消えない）<br>ただし、ブラウザの履歴やサイトデータを消すと消えます、ほかのPCやブラウザでも見えません<br>大事なものは「バックアップを書き出す」でファイルに残しておくと、別のPCでも読み込めます</p>
+  <div class="btns">
+    <button class="btn main" id="exportBtn">バックアップを書き出す</button>
+    <label class="btn">バックアップを読み込む<input type="file" accept=".igpv" id="importInput" hidden></label>
+  </div>
+  <div class="btns" style="margin-top:14px"><button class="btn" id="resetAll">すべて消して最初から</button></div>
 </aside>
 
 <main class="stage" id="stage">
@@ -367,8 +382,18 @@ const DEFAULT = {
   posts:[],
 };
 let S = structuredClone(DEFAULT);
-let saveT;
-function save(){clearTimeout(saveT);saveT=setTimeout(()=>DB.put('kv','state',S),250)}
+let saveT, busy=0, dirty=false, dbOK=true;
+function setStatus(){
+  const el=document.getElementById('saveStatus');if(!el)return;
+  if(!dbOK){el.textContent='このブラウザでは保存できません（プライベートブラウズなど）、更新すると消えます';el.className='savebar ng';return}
+  if(busy){el.textContent=`保存中…（${busy}件）この間は更新・タブを閉じないでください`;el.className='savebar ing';return}
+  if(dirty){el.textContent='保存中…';el.className='savebar ing';return}
+  el.textContent='このブラウザに保存済み、更新しても消えません';el.className='savebar ok';
+}
+async function flush(){clearTimeout(saveT);if(!dbOK)return;try{await DB.put('kv','state',S);dirty=false}catch(e){console.error(e)}setStatus()}
+function save(){dirty=true;setStatus();clearTimeout(saveT);saveT=setTimeout(flush,200)}
+addEventListener('pagehide',()=>{if(dirty)DB.put('kv','state',S)});
+addEventListener('beforeunload',e=>{if(busy||dirty){if(dirty)DB.put('kv','state',S);if(busy){e.preventDefault();e.returnValue=''}}});
 
 /* ========== 動画のサムネ ========== */
 function frameOf(file){
@@ -387,21 +412,54 @@ async function mediaItem(file){
   if(kinds[id]==='video'){const f=await frameOf(file);if(f)thumb=await putBlob(f)}
   return {id,kind:kinds[id],thumb};
 }
+async function withBusy(n,fn){busy+=n;setStatus();try{return await fn()}catch(e){console.error(e);alert('保存に失敗しました：'+e.message)}finally{busy-=n;await flush()}}
 async function addPost(files,type,planned=true){
   files=[...files].filter(f=>f.type.startsWith('image')||f.type.startsWith('video'));
   if(!files.length)return;
-  const media=[];for(const f of files)media.push(await mediaItem(f));
-  if(type==='auto')type=media.length>1?'carousel':(media[0].kind==='video'?'reel':'image');
-  S.posts.unshift({id:uid(),type,media,coverId:null,caption:'',likes:1280,comments:24,views:15200,aspect:'4:5',planned,pinned:false,audio:'オリジナル音源'});
-  save();renderPanel();render();
+  return withBusy(files.length,async()=>{
+    const media=[];for(const f of files)media.push(await mediaItem(f));
+    if(type==='auto')type=media.length>1?'carousel':(media[0].kind==='video'?'reel':'image');
+    S.posts.unshift({id:uid(),type,media,coverId:null,caption:'',likes:1280,comments:24,views:15200,aspect:'4:5',planned,pinned:false,audio:'オリジナル音源'});
+    renderPanel();render();
+  });
 }
-async function addBulk(files){
+function addBulk(files){return withBusy([...files].length,()=>addBulkInner(files))}
+async function addBulkInner(files){
   const list=[...files].filter(f=>f.type.startsWith('image')||f.type.startsWith('video'));
   // 選んだ順の最初が一番新しい想定、予定投稿より下に並べる
   const firstOld=S.posts.findIndex(p=>!p.planned);const at=firstOld<0?S.posts.length:firstOld;
   const made=[];
   for(const f of list){const m=await mediaItem(f);made.push({id:uid(),type:m.kind==='video'?'reel':'image',media:[m],coverId:null,caption:'',likes:640,comments:8,views:8200,aspect:'4:5',planned:false,pinned:false,audio:'オリジナル音源'})}
-  S.posts.splice(at,0,...made);save();renderPanel();render();
+  S.posts.splice(at,0,...made);renderPanel();render();
+}
+
+/* ========== バックアップ（1つのファイルに書き出す） ========== */
+// 形式：先頭8バイト=目印"IGPV0001"、次の4バイト=見出しJSONの長さ、見出しJSON、続けて各ファイルの中身
+function allBlobIds(){return [...new Set([S.profile.avatarId,...S.posts.flatMap(p=>[p.coverId,...p.media.flatMap(m=>[m.id,m.thumb])])].filter(Boolean))]}
+async function exportBackup(){
+  await flush();
+  const ids=allBlobIds(), parts=[], index=[];
+  for(const id of ids){const b=await DB.get('blobs',id);if(!b)continue;index.push({id,type:b.type,size:b.size});parts.push(b)}
+  const head=new TextEncoder().encode(JSON.stringify({state:S,blobs:index}));
+  const len=new Uint8Array(4);new DataView(len.buffer).setUint32(0,head.length);
+  const file=new Blob([new TextEncoder().encode('IGPV0001'),len,head,...parts],{type:'application/octet-stream'});
+  const d=new Date(),p=n=>String(n).padStart(2,'0');
+  const a=document.createElement('a');a.href=URL.createObjectURL(file);a.download=`preview_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.igpv`;
+  a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+}
+async function importBackup(file){
+  const magic=await file.slice(0,8).text();
+  if(magic!=='IGPV0001'){alert('このツールのバックアップファイルではないようです');return}
+  if(S.posts.length&&!confirm('いまの内容を、バックアップの内容に置き換えます、よろしいですか？'))return;
+  await withBusy(1,async()=>{
+    const len=new DataView(await file.slice(8,12).arrayBuffer()).getUint32(0);
+    const head=JSON.parse(await file.slice(12,12+len).text());
+    await DB.clear();Object.keys(urls).forEach(k=>{URL.revokeObjectURL(urls[k]);delete urls[k]});
+    let off=12+len;
+    for(const b of head.blobs){const blob=file.slice(off,off+b.size,b.type);off+=b.size;await DB.put('blobs',b.id,blob);urls[b.id]=URL.createObjectURL(blob);kinds[b.id]=b.type.startsWith('video')?'video':'image'}
+    S={...structuredClone(DEFAULT),...head.state,profile:{...DEFAULT.profile,...head.state.profile},settings:{...DEFAULT.settings,...head.state.settings}};
+    renderPanel();go('profile');
+  });
 }
 
 /* ========== 便利 ========== */
@@ -412,7 +470,8 @@ const cover=p=>p.coverId?U(p.coverId):U(p.media[0]?.thumb);
 const avatar=(cls='')=>S.profile.avatarId?`<img class="${cls}" src="${U(S.profile.avatarId)}">`:`<span class="ph ${cls}"></span>`;
 const uname=()=>`${esc(S.profile.username)}${S.profile.verified?I.verified:''}`;
 const fillerColors=['#d9d4cc','#c9d3d6','#e2d6c4','#cfd8c9','#d6cbd3','#c4ccd8','#ddd0c6','#cad6d1','#d8d3c2','#cbc6d6'];
-const filler=i=>`<div class="filler" style="background:linear-gradient(${(i*47)%360}deg,${fillerColors[i%10]},${fillerColors[(i+3)%10]})"></div>`;
+// 発見のダミー：フリー写真（Lorem Picsum）、縦長枠は写真をゆっくり動かして動画の自動再生に見せる
+const filler=(i,tall)=>`<div class="filler" style="background:linear-gradient(${(i*47)%360}deg,${fillerColors[i%10]},${fillerColors[(i+3)%10]})"><img class="${tall?'kb':''}" style="animation-delay:-${(i*1.7)%9}s" loading="lazy" src="https://picsum.photos/seed/igpv${i*7+3}/${tall?'540/960':'480/640'}" onerror="this.remove()"></div>`;
 function hashtags(t){return esc(t).replace(/(#[^\s#]+|@[\w.]+)/g,'<span style="color:var(--link)">$1</span>')}
 
 /* ========== 画面 ========== */
@@ -529,7 +588,8 @@ function rExplore(){
   view.innerHTML=`
    <div class="hdr" style="height:auto;padding:4px 0 0;display:block"><div class="search">${I.search}<span>検索</span></div></div>
    <div class="xgrid">${cells.map(c=>{
-     if(!c.p)return `<div class="tile ${c.tall?'tall':''}">${filler(c.f)}${c.tall?`<span class="badge">${I.reelBadge}</span>`:''}</div>`;
+     if(!c.p){const b=c.tall?I.reelBadge:(c.f%7===1||c.f%7===4)?I.carousel:c.f%7===6?I.reelBadge:'';
+       return `<div class="tile ${c.tall?'tall':''}">${filler(c.f,c.tall)}${b?`<span class="badge">${b}</span>`:''}</div>`}
      const p=c.p;
      const media=p.type==='reel'&&c.tall&&p.media[0].kind==='video'
        ?`<video src="${U(p.media[0].id)}" poster="${cover(p)}" muted loop playsinline data-auto></video>`
@@ -751,7 +811,9 @@ function wirePanel(){
   document.querySelectorAll('#segTheme button').forEach(b=>b.onclick=()=>{S.settings.theme=b.dataset.v;save();renderPanel();render()});
   optSafe.onchange=()=>{S.settings.safe=optSafe.checked;save();render()};
   optMark.onchange=()=>{S.settings.mark=optMark.checked;save();render()};
-  resetAll.onclick=async()=>{if(!confirm('投稿・アカウント設定をすべて消します、よろしいですか？'))return;await DB.clear();S=structuredClone(DEFAULT);renderPanel();go('profile')};
+  resetAll.onclick=async()=>{if(!confirm('投稿・アカウント設定をすべて消します、よろしいですか？\n（バックアップを書き出していない分は元に戻せません）'))return;await DB.clear();S=structuredClone(DEFAULT);await flush();renderPanel();go('profile')};
+  exportBtn.onclick=()=>exportBackup();
+  importInput.onchange=async()=>{const f=importInput.files[0];importInput.value='';if(f)await importBackup(f)};
   presentBtn.onclick=()=>{document.body.classList.toggle('present');presentBtn.textContent=document.body.classList.contains('present')?'パネルを出す':'提案モード（パネルを隠す）';fit()};
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.body.classList.contains('present'))presentBtn.click()});
 }
@@ -767,12 +829,14 @@ addEventListener('resize',fit);
 
 /* ========== 起動 ========== */
 (async()=>{
-  await DB.open();
-  const saved=await DB.get('kv','state');
+  try{await DB.open();await DB.put('kv','_probe',1)}catch(e){dbOK=false}
+  // ブラウザが容量整理のときに勝手に消さないよう、永続化を頼む
+  try{if(navigator.storage&&navigator.storage.persist&&!(await navigator.storage.persisted()))await navigator.storage.persist()}catch(e){}
+  const saved=dbOK?await DB.get('kv','state'):null;
   if(saved){S={...structuredClone(DEFAULT),...saved,profile:{...DEFAULT.profile,...saved.profile},settings:{...DEFAULT.settings,...saved.settings}}}
   const ids=[S.profile.avatarId,...S.posts.flatMap(p=>[p.coverId,...p.media.flatMap(m=>[m.id,m.thumb])])].filter(Boolean);
   await Promise.all([...new Set(ids)].map(loadBlob));
-  wirePanel();renderPanel();fit();render();
+  wirePanel();renderPanel();setStatus();fit();render();
 })();
 </script>
 </body>
