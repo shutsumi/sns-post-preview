@@ -27,6 +27,7 @@ input,textarea,select{font:inherit;color:var(--ink)}
 .panel .lead{color:var(--accent);font-size:12px;font-weight:700;margin-top:4px;letter-spacing:.06em}
 .panel h2{font-size:13px;font-weight:700;letter-spacing:.08em;margin:26px 0 10px;padding-top:18px;border-top:1px dotted #c9c9c9}
 .panel .note{font-size:11.5px;color:var(--sub);line-height:1.7}
+#shareLinkMsg,#exportMsg{white-space:pre-line}
 .row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
 .row label{font-size:12px;width:92px;flex:none;color:var(--ink)}
 .row input[type=text],.row input[type=number],.row textarea,.row select{flex:1;min-width:0;border:1px solid var(--line);border-radius:4px;padding:6px 8px;font-size:13px;background:#fff}
@@ -288,13 +289,15 @@ body.present{background:#e4e4e2}
 
   <h2>チームに共有する</h2>
   <p class="note" style="margin-bottom:8px"><b>アカウントの設定だけ（アイコン・名前・自己紹介・数字・表示の設定）</b><br>リンクを送るだけで共有できる、開いた人はそのまま続きを編集できる</p>
-  <div class="btns"><button class="btn main" id="shareLinkBtn">共有リンクをコピー</button></div>
+  <div class="btns"><button class="btn main" id="shareLinkBtn">共有リンクをコピー</button><button class="btn" id="shareSendBtn" hidden>アプリで送る</button></div>
   <p class="note" id="shareLinkMsg" style="margin-top:6px"></p>
+  <textarea id="shareLinkBox" readonly hidden style="width:100%;height:64px;margin-top:6px;font-size:11px;word-break:break-all;border:1px solid #ddd;border-radius:6px;padding:6px;color:#545454"></textarea>
   <p class="note" style="margin:14px 0 8px"><b>投稿の動画・画像も含めてまるごと</b><br>1つのファイルに書き出して、Slack やGoogleドライブで渡す、受け取った人は「共有ファイルを読み込む」か、上の「ここにドロップ」の枠にファイルを落とすと同じ状態になり、続きを編集できる</p>
   <div class="btns">
     <button class="btn main" id="exportBtn">共有ファイルを書き出す</button>
     <label class="btn">共有ファイルを読み込む<input type="file" accept=".igpv" id="importInput" hidden></label>
   </div>
+  <p class="note" id="exportMsg" style="margin-top:6px"></p>
 
   <h2>データ</h2>
   <p class="note" style="margin-bottom:8px">入れた動画・画像・文字は、このブラウザに自動で保存されます（更新しても消えない）<br>ただし、ブラウザの履歴やサイトデータを消すと消えます、ほかのPCやブラウザでも見えません<br>大事なものは「共有ファイルを書き出す」でファイルに残しておくと、別のPCでも読み込めます</p>
@@ -448,9 +451,12 @@ const b64u={enc:u8=>{let s='';for(let i=0;i<u8.length;i+=0x8000)s+=String.fromCh
   dec:s=>{s=s.replace(/-/g,'+').replace(/_/g,'/');const b=atob(s);return Uint8Array.from(b,c=>c.charCodeAt(0))}};
 async function deflate(str){const cs=new Blob([str]).stream().pipeThrough(new CompressionStream('deflate-raw'));return new Uint8Array(await new Response(cs).arrayBuffer())}
 async function inflate(u8){const ds=new Blob([u8]).stream().pipeThrough(new DecompressionStream('deflate-raw'));return await new Response(ds).text()}
+let avatarSkipped=false;
 async function smallAvatar(){
+  avatarSkipped=false;
   if(!S.profile.avatarId)return null;
-  const img=new Image();img.src=U(S.profile.avatarId);await img.decode();
+  const img=new Image();img.src=U(S.profile.avatarId);
+  try{await img.decode()}catch(e){avatarSkipped=true;return null}
   const n=200,c=document.createElement('canvas');c.width=c.height=n;const s=Math.min(img.width,img.height);
   c.getContext('2d').drawImage(img,(img.width-s)/2,(img.height-s)/2,s,s,0,0,n,n);
   return c.toDataURL('image/jpeg',.8);
@@ -483,7 +489,8 @@ async function exportBackup(){
   const file=new Blob([new TextEncoder().encode('IGPV0001'),len,head,...parts],{type:'application/octet-stream'});
   const d=new Date(),p=n=>String(n).padStart(2,'0');
   const a=document.createElement('a');a.href=URL.createObjectURL(file);a.download=`preview_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.igpv`;
-  a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+  document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),60000);
+  return file.size;
 }
 async function importBackup(file){
   const magic=await file.slice(0,8).text();
@@ -872,17 +879,38 @@ function wirePanel(){
   const d=document.getElementById('drop');
   d.ondragover=e=>{e.preventDefault();d.classList.add('over')};d.ondragleave=()=>d.classList.remove('over');
   d.ondrop=e=>{e.preventDefault();d.classList.remove('over');const fs=[...e.dataTransfer.files];const bk=fs.find(f=>/\.igpv$/i.test(f.name));if(bk)importBackup(bk);else addPost(fs,'auto')};
-  shareLinkBtn.onclick=async()=>{
-    const url=await makeShareLink();const m=document.getElementById('shareLinkMsg');
-    try{await navigator.clipboard.writeText(url);m.textContent=`コピーしました（${url.length.toLocaleString()}文字）、Slack などに貼って送れます`}
-    catch(e){prompt('このリンクをコピーしてください',url);m.textContent=''}
+  const box=document.getElementById('shareLinkBox'),lm=document.getElementById('shareLinkMsg');
+  box.onfocus=()=>box.select();
+  const showLink=url=>{box.value=url;box.hidden=false;
+    lm.textContent=avatarSkipped?'※アイコン画像が読み取れない形式だったので、アイコン以外を入れています（JPEG・PNGで入れ直すと含められます）':''};
+  if(navigator.share)shareSendBtn.hidden=false;
+  shareLinkBtn.onclick=()=>{
+    const p=makeShareLink();
+    let copied;
+    if(window.ClipboardItem&&navigator.clipboard?.write){
+      copied=navigator.clipboard.write([new ClipboardItem({'text/plain':p.then(u=>new Blob([u],{type:'text/plain'}))})]);
+    }else{copied=p.then(u=>navigator.clipboard.writeText(u))}
+    p.then(url=>{showLink(url);
+      copied.then(()=>{lm.textContent=`コピーしました（${url.length.toLocaleString()}文字）、Slack などに貼って送れます`+(avatarSkipped?'\n'+lm.textContent:'')},
+        ()=>{box.focus();lm.textContent='自動でコピーできなかったので、下の枠のリンクをコピーして送ってください（枠をクリックすると全部選ばれます）'})
+    }).catch(e=>{console.error(e);lm.textContent='リンクを作れませんでした：'+e.message});
+  };
+  shareSendBtn.onclick=async()=>{
+    try{const url=await makeShareLink();showLink(url);await navigator.share({title:'インスタ表示プレビューの設定',url})}
+    catch(e){if(e.name!=='AbortError'){lm.textContent='共有メニューを開けなかったので、下の枠のリンクをコピーして送ってください'}}
   };
   document.querySelectorAll('#segGrid button').forEach(b=>b.onclick=()=>{S.settings.grid=b.dataset.v;save();renderPanel();render()});
   document.querySelectorAll('#segTheme button').forEach(b=>b.onclick=()=>{S.settings.theme=b.dataset.v;save();renderPanel();render()});
   optSafe.onchange=()=>{S.settings.safe=optSafe.checked;save();render()};
   optMark.onchange=()=>{S.settings.mark=optMark.checked;save();render()};
   resetAll.onclick=async()=>{if(!confirm('投稿・アカウント設定をすべて消します、よろしいですか？\n（バックアップを書き出していない分は元に戻せません）'))return;await DB.clear();S=structuredClone(DEFAULT);await flush();renderPanel();go('profile')};
-  exportBtn.onclick=()=>exportBackup();
+  exportBtn.onclick=async()=>{
+    const em=document.getElementById('exportMsg');em.textContent='書き出し中…';
+    try{const size=await exportBackup();const mb=size/1048576;
+      em.textContent=`書き出しました（${mb<1?'1MB未満':mb.toFixed(1)+'MB'}）、ダウンロードフォルダの .igpv ファイルを送ってください`+
+        (mb>25?'\nメールは25MBまでなので、Googleドライブにアップロードしてリンクを送るのが確実です':'')}
+    catch(e){console.error(e);em.textContent='書き出せませんでした：'+e.message}
+  };
   importInput.onchange=async()=>{const f=importInput.files[0];importInput.value='';if(f)await importBackup(f)};
   presentBtn.onclick=()=>{document.body.classList.toggle('present');presentBtn.textContent=document.body.classList.contains('present')?'パネルを出す':'提案モード（パネルを隠す）';fit()};
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.body.classList.contains('present'))presentBtn.click()});
